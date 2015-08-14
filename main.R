@@ -57,7 +57,7 @@ main <- function(){
   if(length(errored_files)){
     rerun_file_data <- parallel::mclapply(X = errored_files, FUN = memo, mc.preschedule = FALSE,
                                           mc.cores = 2, mc.cleanup = TRUE)
-    test <- c(results, rerun_file_data)
+    results <- c(results, rerun_file_data)
   }
   
   # Bind the results together into a single table and check that the date ranges are what we want.
