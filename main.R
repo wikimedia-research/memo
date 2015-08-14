@@ -1,8 +1,10 @@
 # Dependencies
-library(parallel)
-library(wmf)
-library(urltools)
-library(data.table)
+library(parallel) # This comes standard with every R installation
+library(wmf) # install.packages("devtools"); devtools::install_github("ironholds/wmf")
+library(urltools) # install.packages("urltools")
+library(data.table) # install.packages("data.table")
+library(ggthemes) # install.packages("ggthemes")
+library(ggplot2) # This is installed automatically as a ggthemes dependency.
 
 main <- function(){
   
@@ -23,17 +25,18 @@ main <- function(){
     # Identify pageviews from spiders
     data$is_spider <- wmf::is_spider(data$user_agent)
     
-    # Decode referers and identify whether requests are from google.
+    # Decode referers and identify whether requests are from google. Also identify whether
+    # referers are nul (just a dash) so we can count those too.
     data$referer <- urltools::domain(urltools::url_decode(data$referer))
     data$is_google <- grepl(x = data$referer, pattern = "google", fixed = TRUE, useBytes = TRUE)
     data$is_nul <- (data$referer == "-")
     
     # Turn the relevant fields into a data.table so we can aggregate.
     # Then aggregate to just get the number of google pageviews, nul pageviews and pageviews,
-    # full stop.
+    # full stop. We'll distinguish spiders to be on the safe side.
     data <- as.data.table(data[, c("timestamp", "is_spider", "is_nul", "is_google")])
     result <- data[, j = list(google = sum(is_google), no_referer = sum(is_nul),
-                              pageviews = .N), by = "timestamp"]
+                              pageviews = .N), by = c("timestamp", "is_spider")]
     gc()
     cat(".")
     return(result)
@@ -65,5 +68,6 @@ main <- function(){
   # December, and some of 1 August is in the file for 2 August.
   results <- do.call("rbind", results)
   results <- results[results$timestamp >= as.Date(start_date) & results$timestamp <= as.Date(end_date),]
+  
   
 }
