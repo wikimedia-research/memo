@@ -29,7 +29,7 @@ references:
     year: 2015
 ---
 
-*Summary* no direct data shows a decrease in Google traffic; in fact, direct referrals from Google have been increasing in the last
+*Summary:* no direct data shows a decrease in Google traffic; in fact, direct referrals from Google have been increasing in the last
 few months, rather than decreasing. However, we have some fuzziness around indirect referrals that cannot be resolved without the participation of Google. We should seek that participation, and work on tracking these metrics in an automated fashion.
 
 # Background
