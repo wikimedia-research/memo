@@ -5,6 +5,10 @@ library(urltools) # install.packages("urltools")
 library(data.table) # install.packages("data.table")
 library(ggthemes) # install.packages("ggthemes")
 library(ggplot2) # This is installed automatically as a ggthemes dependency.
+library(scales)
+library(lubridate)
+
+options(scipen = 500)
 
 main <- function(){
   
@@ -58,16 +62,90 @@ main <- function(){
   result_classes <- unlist(lapply(results, function(x){return(class(x)[1])}))
   errored_files <- files[which(result_classes == "try-error")]
   if(length(errored_files)){
+    
+    #NULL out the errored results
+    results <- lapply(X = results, FUN = function(x){
+      if(class(x)[1] != "try-error"){
+        return(x)
+      }
+    })
+    
+    #Rerun to grab the data for the errored-out days.
     rerun_file_data <- parallel::mclapply(X = errored_files, FUN = memo, mc.preschedule = FALSE,
                                           mc.cores = 2, mc.cleanup = TRUE)
+    
+    #Bind together the (cleaned-up) results and rerun data.
     results <- c(results, rerun_file_data)
+
   }
   
   # Bind the results together into a single table and check that the date ranges are what we want.
   # Because the log files switch over at 06:00 UTC, not 00:00 UTC, 1 January contains some of 31
   # December, and some of 1 August is in the file for 2 August.
   results <- do.call("rbind", results)
-  results <- results[results$timestamp >= as.Date(start_date) & results$timestamp <= as.Date(end_date),]
+  results <- results[results$timestamp >= as.Date(start_date) & results$timestamp < as.Date(end_date),]
   
+  # Multiply up, since all the raw values here are actual_val/1000
+  results$google <- results$google*1000
+  results$no_referer <- results$no_referer*1000
+  results$pageviews <- results$pageviews*1000
+  
+  # Read in pagecounts from the unsampled logs so we can benchmark and make sure that our
+  # overall pageview count is (broadly) accurate before doing further analysis.
+  hourly_pagecounts <- wmf::hive_query(query = "
+                                     USE wmf;
+                                     SELECT project, year, month, day, SUM(view_count) AS pageviews
+                                     FROM pageview_hourly
+                                     WHERE year = 2015
+                                     AND month IN(5,6,7)
+                                     GROUP BY project, year, month, day;")
+    
+  # Clean up by normalising the project name and excluding project types we don't care about
+  desired_projects <- c("wikibooks", "wikipedia", "wiktionary", "wikiquote", "wikisource", 
+                        "wikinews", "wikiversity", "wikimedia", "wikivoyage", 
+                        "wikidata")
+  undesired_subgroups <- c("outreach","donate","arbcom-de","arbcom-nl","arbcom-en","arbcom-fi")
+  hourly_pagecounts <- hourly_pagecounts[gsub(x = hourly_pagecounts$project, pattern = ".*\\.", replacement = "")
+                                         %in% desired_projects,]
+  hourly_pagecounts <- hourly_pagecounts[!gsub(x = hourly_pagecounts$project, pattern = "\\..*", replacement = "")
+                                         %in% undesired_subgroups,]
+  
+  # Create dates and aggregate by those
+  hourly_pagecounts$timestamp <- as.Date(paste(hourly_pagecounts$year, hourly_pagecounts$month,
+                                               hourly_pagecounts$day, sep = "-"))
+  hourly_pagecounts <- hourly_pagecounts[, j = list(pageviews = sum(pageviews)), by = c("timestamp")]
+  hourly_pagecounts$type <- "Unsampled logs"
+  
+  # Create results aggregate and bind it in.
+  local_results <- results[timestamp %in% hourly_pagecounts$timestamp, j = list(pageviews = sum(pageviews)), by = c("timestamp")]
+  local_results$type <- "Sampled logs"
+  testing_dataset <- rbind(hourly_pagecounts, local_results)
+  
+  # Plot
+  ggsave(file = "sample_testing.png",
+         plot = ggplot(testing_dataset, aes(timestamp, pageviews, group = type, colour = type)) + 
+           geom_line(size = 2) + theme_fivethirtyeight() +
+           labs(title = "Pageviews by day, sampled versus unsampled logs"))
+  
+  #Back to the final analysis. Calculate proportions, too.
+  results$google_proportion <- results$google/results$pageviews
+  results$nul_proportion <- results$no_referer/results$pageviews
+  
+  #Add a month column to make aggregates really easy.
+  results$month <- results$timestamp
+  lubridate::day(results$month) <- 1
+  
+  # Look at google proportions, minus spiders
+  ggsave(file = "google_proportions.png",
+         plot = ggplot(results[results$is_spider == FALSE,], aes(timestamp, google_proportion)) + 
+           geom_line(colour = "#CC0000") + theme_fivethirtyeight() + stat_smooth() +
+           scale_x_date() + scale_y_continuous(labels = percent) +
+           labs(x = "Date", y = "Pageviews (%)", title = "Proportion of pageviews with Google referers"))
+
+  ggsave(file = "nul_proportions.png",
+         plot = ggplot(results[results$is_spider == FALSE,], aes(timestamp, nul_proportion)) + 
+           geom_line(colour = "#CC0000") + theme_fivethirtyeight() + stat_smooth() +
+           scale_x_date() + scale_y_continuous(labels = percent) +
+           labs(x = "Date", y = "Pageviews (%)", title = "Proportion of pageviews with no referers"))
   
 }
